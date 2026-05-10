@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Validador PeerJS & Socket.io</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; }
+        #video-grid { display: grid; grid-template-columns: repeat(auto-fill, 300px); gap: 10px; padding: 20px; }
+        video { width: 100%; background: #222; border-radius: 8px; border: 2px solid #444; }
+        .talking { border-color: #00ff00 !important; box-shadow: 0 0 10px #00ff00; }
+        .controls { background: #222; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        input { padding: 8px; border-radius: 4px; border: none; margin-right: 5px; }
+        button { padding: 8px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:disabled { background: #555; }
+    </style>
+</head>
+<body>
+
+    <h2>Validador de Chat WebRTC</h2>
+
+    <div class="controls" id="setup">
+        <input type="text" id="roomInput" placeholder="Nome da Sala (ex: sala1)">
+        <input type="text" id="nameInput" placeholder="Seu Nome">
+        <button id="joinBtn">Entrar na Chamada</button>
+    </div>
+
+    <div id="status" style="margin-top: 10px; color: #aaa;">Aguardando conexão...</div>
+
+    <div id="video-grid">
+        </div>
+
+    <script>
+        const socket = io('/');
+        const videoGrid = document.getElementById('video-grid');
+        const statusDiv = document.getElementById('status');
+        let myPeer;
+        let myStream;
+        const peers = {};
+
+        // 1. Configurar o PeerJS usando o servidor que você criou
+        function initPeer(peerId) {
+            myPeer = new Peer(peerId, {
+                host: '/',
+                path: '/peerjs',
+                port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80)
+            });
+
+            myPeer.on('open', id => {
+                statusDiv.innerText = `Conectado ao PeerJS com ID: ${id}`;
+            });
+
+            // Receber chamada
+            myPeer.on('call', call => {
+                call.answer(myStream);
+                const video = document.createElement('video');
+                call.on('stream', userVideoStream => {
+                    addVideoStream(video, userVideoStream, call.peer);
+                });
+            });
+        }
+
+        // 2. Ação de Entrar na Sala
+        document.getElementById('joinBtn').addEventListener('click', async () => {
+            const room = document.getElementById('roomInput').value;
+            const name = document.getElementById('nameInput').value;
+
+            if (!room || !name) return alert("Preencha sala e nome!");
+
+            // Pedir permissão de mídia
+            myStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            addVideoStream(document.createElement('video'), myStream, 'me', true);
+
+            const tempPeerId = Math.random().toString(36).substr(2, 9);
+            initPeer(tempPeerId);
+
+            // Registrar no Socket.io
+            socket.emit('register', { room, peerId: tempPeerId, name });
+            
+            document.getElementById('setup').style.display = 'none';
+        });
+
+        // 3. Handlers do Socket.io
+        socket.on('presence', users => {
+            console.log('Usuários na sala:', users);
+            users.forEach(user => {
+                if (user.peerId !== myPeer.id && !peers[user.peerId]) {
+                    connectToNewUser(user.peerId, myStream);
+                }
+            });
+        });
+
+        socket.on('user_talking', data => {
+            const video = document.getElementById(data.peerId);
+            if (video) {
+                data.isTalking ? video.classList.add('talking') : video.classList.remove('talking');
+            }
+        });
+
+        // 4. Funções Auxiliares
+        function connectToNewUser(peerId, stream) {
+            const call = myPeer.call(peerId, stream);
+            const video = document.createElement('video');
+            call.on('stream', userVideoStream => {
+                addVideoStream(video, userVideoStream, peerId);
+            });
+            call.on('close', () => video.remove());
+            peers[peerId] = call;
+        }
+
+        function addVideoStream(video, stream, id, isMuted = false) {
+            video.srcObject = stream;
+            video.id = id;
+            if (isMuted) video.muted = true;
+            video.addEventListener('loadedmetadata', () => video.play());
+            videoGrid.append(video);
+        }
+
+        // Detecção básica de fala (VAD simples para teste)
+        setInterval(() => {
+            if (myStream) {
+                // Aqui você implementaria a lógica de volume. 
+                // Para teste, vamos disparar via console ou botão se quiser validar o evento 'talking_state'
+            }
+        }, 2000);
+
+    </script>
+</body>
+</html>
