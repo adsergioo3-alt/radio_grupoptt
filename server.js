@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',');
 
-// Logger utility
 const logger = {
   info: (msg) => console.log(`ℹ️  [INFO]`, msg),
   success: (msg) => console.log(`✅ [SUCCESS]`, msg),
@@ -21,7 +20,6 @@ const logger = {
 // ==================== EXPRESS SETUP ====================
 const app = express();
 
-// CORS configuration com segurança melhorada
 app.use(cors({
   origin: NODE_ENV === 'production' ? ALLOWED_ORIGINS : "*",
   methods: ["GET", "POST"],
@@ -31,7 +29,6 @@ app.use(cors({
 
 const server = http.createServer(app);
 
-// Socket.io configuration com tratamento de erros
 const io = socketIO(server, {
   cors: {
     origin: NODE_ENV === 'production' ? ALLOWED_ORIGINS : "*",
@@ -39,20 +36,21 @@ const io = socketIO(server, {
     credentials: true
   },
   transports: ['websocket', 'polling'],
-  maxHttpBufferSize: 1e6
+  maxHttpBufferSize: 1e6,
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
-// PeerJS server configuration
+// PeerJS
 const peerServer = ExpressPeerServer(server, {
   debug: NODE_ENV === 'development',
   path: '/peerjs',
   proxied: true,
-  allow_discovery: false // Segurança: desabilitar descoberta
+  allow_discovery: false
 });
 
 app.use(peerServer);
 
-// Error handler para PeerJS
 peerServer.on('error', (err) => {
   logger.error(`PeerJS Error: ${err.message}`);
 });
@@ -63,25 +61,10 @@ app.use(express.static(path.join(__dirname), {
 }));
 
 // ==================== ROTAS ====================
-app.get('/', (req, res) => {
-  try {
-    res.sendFile(path.join(__dirname, 'index.html'));
-  } catch (err) {
-    logger.error(`Erro ao servir index.html: ${err.message}`);
-    res.status(500).send('Erro ao carregar página');
-  }
-});
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/grupo.html', (req, res) => res.sendFile(path.join(__dirname, 'grupo.html')));
+app.get('/web-tester.html', (req, res) => res.sendFile(path.join(__dirname, 'web-tester.html')));
 
-app.get('/grupo.html', (req, res) => {
-  try {
-    res.sendFile(path.join(__dirname, 'grupo.html'));
-  } catch (err) {
-    logger.error(`Erro ao servir grupo.html: ${err.message}`);
-    res.status(500).send('Erro ao carregar página');
-  }
-});
-
-// Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'ok', 
@@ -93,228 +76,167 @@ app.get('/health', (req, res) => {
 // ==================== ROOM MANAGEMENT ====================
 let rooms = {};
 
-// Funções auxiliares com tratamento de erros
+// Funções auxiliares
 const getUserRoom = (socketId) => {
-  try {
-    for (const room in rooms) {
-      if (rooms[room][socketId]) {
-        return room;
-      }
-    }
-  } catch (err) {
-    logger.error(`Erro ao obter room do usuário: ${err.message}`);
+  for (const room in rooms) {
+    if (rooms[room][socketId]) return room;
   }
   return null;
 };
 
 const broadcastPresence = (room) => {
-  try {
-    if (rooms[room]) {
-      const userList = Object.values(rooms[room]);
-      io.to(room).emit('presence', userList);
-      logger.info(`Presença atualizada para sala: ${room} (${userList.length} usuários)`);
-    }
-  } catch (err) {
-    logger.error(`Erro ao broadcast presença: ${err.message}`);
-  }
+  if (!rooms[room]) return;
+  
+  const userList = Object.values(rooms[room]).map(user => ({
+    peerId: user.peerId,
+    name: user.name,
+    isTalking: user.isTalking
+  }));
+
+  io.to(room).emit('presence', userList);
+  logger.info(`Presença atualizada em [${room}] → ${userList.length} usuários`);
 };
 
-const validateRegistrationData = (data) => {
-  if (!data || typeof data !== 'object') {
-    return { valid: false, error: 'Dados inválidos' };
-  }
-
-  const { room, peerId, name } = data;
-
-  if (!room || typeof room !== 'string' || room.trim().length === 0) {
-    return { valid: false, error: 'Room inválida' };
-  }
-
-  if (!peerId || typeof peerId !== 'string' || peerId.trim().length === 0) {
-    return { valid: false, error: 'PeerId inválido' };
-  }
-
-  if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    return { valid: false, error: 'Nome inválido' };
-  }
-
-  return { valid: true };
-};
-
-// ==================== SOCKET.IO HANDLERS ====================
+// ==================== SOCKET.IO ====================
 io.on('connection', (socket) => {
   logger.success(`Novo cliente conectado: ${socket.id}`);
 
-  // EVENT: Usuário se registra em uma sala
+  // ==================== REGISTER ====================
   socket.on('register', (data) => {
     try {
-      const validation = validateRegistrationData(data);
-      
-      if (!validation.valid) {
-        logger.warn(`Registro inválido: ${validation.error}`);
-        socket.emit('error', { message: validation.error });
-        return;
+      if (!data?.room || !data?.peerId || !data?.name) {
+        return socket.emit('error', { message: 'Dados incompletos' });
       }
 
       const { room, peerId, name } = data;
+      const cleanRoom = room.trim();
+      const cleanPeerId = peerId.trim();
+      const cleanName = name.trim();
 
-      socket.join(room);
+      socket.join(cleanRoom);
 
-      if (!rooms[room]) {
-        rooms[room] = {};
+      if (!rooms[cleanRoom]) rooms[cleanRoom] = {};
+
+      const currentRoom = rooms[cleanRoom];
+
+      // === PREVENÇÃO DE DUPLICATAS ===
+      let replaced = false;
+      for (const [existingSocketId, user] of Object.entries(currentRoom)) {
+        if (user.peerId === cleanPeerId || user.name.toLowerCase() === cleanName.toLowerCase()) {
+          if (existingSocketId !== socket.id) {
+            logger.warn(`Removendo usuário duplicado: ${user.name} (${existingSocketId})`);
+            delete currentRoom[existingSocketId];
+          }
+          replaced = true;
+        }
       }
 
-      rooms[room][socket.id] = {
-        peerId: peerId.trim(),
-        name: name.trim(),
+      // Registra / Atualiza usuário
+      currentRoom[socket.id] = {
+        peerId: cleanPeerId,
+        name: cleanName,
         isTalking: false,
-        room: room,
+        room: cleanRoom,
         joinedAt: new Date().toISOString()
       };
 
-      logger.success(`Usuário registrado em [${room}]: ${name} (${peerId})`);
-      broadcastPresence(room);
+      logger.success(`${replaced ? '🔄 Reconectado' : '✅ Registrado'}: ${cleanName} em [${cleanRoom}]`);
 
-      socket.emit('registered', { success: true });
+      broadcastPresence(cleanRoom);
+      socket.emit('registered', { success: true, reconnected: replaced });
+
     } catch (err) {
-      logger.error(`Erro no registro: ${err.message}`);
-      socket.emit('error', { message: 'Erro ao registrar' });
+      logger.error(`Erro no register: ${err.message}`);
+      socket.emit('error', { message: 'Erro interno ao registrar' });
     }
   });
 
-  // EVENT: Obter lista de usuários ativos
+  // ==================== OUTROS EVENTOS ====================
   socket.on('get_active_users', (callback) => {
     try {
       const userRoom = getUserRoom(socket.id);
-      if (typeof callback !== 'function') {
-        logger.warn('Callback de get_active_users não é uma função');
-        return;
-      }
-
-      if (userRoom && rooms[userRoom]) {
-        const userList = Object.values(rooms[userRoom]);
-        callback(userList);
-        logger.info(`Lista de usuários enviada para ${socket.id}: ${userList.length} usuários`);
-      } else {
-        callback([]);
+      if (typeof callback === 'function') {
+        callback(userRoom && rooms[userRoom] ? Object.values(rooms[userRoom]) : []);
       }
     } catch (err) {
-      logger.error(`Erro ao obter usuários ativos: ${err.message}`);
-      if (typeof callback === 'function') {
-        callback([]);
-      }
+      logger.error(`Erro get_active_users: ${err.message}`);
+      if (typeof callback === 'function') callback([]);
     }
   });
 
-  // EVENT: Atualizar estado de fala (talking state)
   socket.on('talking_state', (data) => {
     try {
-      if (!data || typeof data.isTalking !== 'boolean') {
-        logger.warn('Dados de talking_state inválidos');
-        return;
-      }
+      if (typeof data?.isTalking !== 'boolean') return;
 
       const userRoom = getUserRoom(socket.id);
+      if (!userRoom || !rooms[userRoom]?.[socket.id]) return;
 
-      if (userRoom && rooms[userRoom] && rooms[userRoom][socket.id]) {
-        rooms[userRoom][socket.id].isTalking = data.isTalking;
-        
-        socket.to(userRoom).emit('user_talking', {
-          peerId: rooms[userRoom][socket.id].peerId,
-          name: rooms[userRoom][socket.id].name,
-          isTalking: data.isTalking
-        });
+      const user = rooms[userRoom][socket.id];
+      user.isTalking = data.isTalking;
 
-        broadcastPresence(userRoom);
-        logger.info(`Usuário ${rooms[userRoom][socket.id].name} está ${data.isTalking ? 'falando' : 'silencioso'}`);
-      }
+      socket.to(userRoom).emit('user_talking', {
+        peerId: user.peerId,
+        name: user.name,
+        isTalking: data.isTalking
+      });
+
+      broadcastPresence(userRoom);
     } catch (err) {
-      logger.error(`Erro ao atualizar talking state: ${err.message}`);
+      logger.error(`Erro talking_state: ${err.message}`);
     }
   });
 
-  // EVENT: Desconexão
+  // ==================== DISCONNECT ====================
   socket.on('disconnect', () => {
     try {
       const userRoom = getUserRoom(socket.id);
+      if (!userRoom || !rooms[userRoom]?.[socket.id]) return;
 
-      if (userRoom && rooms[userRoom] && rooms[userRoom][socket.id]) {
-        const user = rooms[userRoom][socket.id];
-        logger.warn(`Usuário desconectado de [${userRoom}]: ${user.name}`);
+      const user = rooms[userRoom][socket.id];
 
-        if (user.isTalking) {
-          socket.to(userRoom).emit('user_talking', {
-            peerId: user.peerId,
-            name: user.name,
-            isTalking: false
-          });
-        }
+      logger.warn(`Desconexão: ${user.name} (${socket.id})`);
 
-        delete rooms[userRoom][socket.id];
+      if (user.isTalking) {
+        socket.to(userRoom).emit('user_talking', {
+          peerId: user.peerId,
+          name: user.name,
+          isTalking: false
+        });
+      }
 
-        if (Object.keys(rooms[userRoom]).length === 0) {
-          delete rooms[userRoom];
-          logger.info(`Sala [${userRoom}] foi deletada (vazia)`);
-        } else {
-          broadcastPresence(userRoom);
-        }
+      delete rooms[userRoom][socket.id];
+
+      if (Object.keys(rooms[userRoom]).length === 0) {
+        delete rooms[userRoom];
+        logger.info(`Sala [${userRoom}] removida (vazia)`);
+      } else {
+        broadcastPresence(userRoom);
       }
     } catch (err) {
-      logger.error(`Erro ao processar desconexão: ${err.message}`);
+      logger.error(`Erro no disconnect: ${err.message}`);
     }
   });
 
-  // EVENT: Tratamento de erros de socket
-  socket.on('error', (error) => {
-    logger.error(`Erro de Socket [${socket.id}]: ${error.message}`);
+  socket.on('error', (err) => {
+    logger.error(`Socket Error [${socket.id}]: ${err.message}`);
   });
 });
 
-// ==================== GLOBAL ERROR HANDLERS ====================
-
-// Error handler para Express
+// ==================== ERROR HANDLERS ====================
 app.use((err, req, res, next) => {
   logger.error(`Express Error: ${err.message}`);
-  res.status(err.status || 500).json({
-    error: NODE_ENV === 'development' ? err.message : 'Erro interno do servidor'
-  });
+  res.status(500).json({ error: NODE_ENV === 'development' ? err.message : 'Erro interno' });
 });
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Rota não encontrada' });
 });
 
-// ==================== SERVER STARTUP ====================
+// ==================== START ====================
 server.listen(PORT, () => {
   logger.success(`🚀 Servidor rodando em http://localhost:${PORT}`);
   logger.info(`Modo: ${NODE_ENV}`);
-  logger.info(`CORS Origins: ${NODE_ENV === 'production' ? ALLOWED_ORIGINS.join(', ') : 'Todos'}`);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.warn('SIGTERM recebido, encerrando servidor...');
-  server.close(() => {
-    logger.success('Servidor encerrado');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  logger.warn('SIGINT recebido, encerrando servidor...');
-  server.close(() => {
-    logger.success('Servidor encerrado');
-    process.exit(0);
-  });
-});
-
-// Uncaught exceptions
-process.on('uncaughtException', (err) => {
-  logger.error(`Uncaught Exception: ${err.message}`);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error(`Unhandled Rejection em ${promise}: ${reason}`);
-});
+process.on('SIGTERM', () => { logger.warn('SIGTERM recebido'); server.close(); });
+process.on('SIGINT', () => { logger.warn('SIGINT recebido'); server.close(); });
