@@ -8,20 +8,25 @@ const cors = require('cors');
 // ==================== CONFIGURAÇÃO ====================
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',');
+
+const ALLOWED_ORIGINS = (
+  process.env.ALLOWED_ORIGINS || 'http://localhost:3000'
+).split(',');
 
 const logger = {
-  info: (msg) => console.log(`ℹ️  [INFO]`, msg),
+  info: (msg) => console.log(`ℹ️ [INFO]`, msg),
   success: (msg) => console.log(`✅ [SUCCESS]`, msg),
-  warn: (msg) => console.log(`⚠️  [WARN]`, msg),
+  warn: (msg) => console.log(`⚠️ [WARN]`, msg),
   error: (msg) => console.error(`❌ [ERROR]`, msg)
 };
 
-// ==================== EXPRESS SETUP ====================
+// ==================== EXPRESS ====================
 const app = express();
 
 app.use(cors({
-  origin: NODE_ENV === 'production' ? ALLOWED_ORIGINS : "*",
+  origin: NODE_ENV === 'production'
+    ? ALLOWED_ORIGINS
+    : "*",
   methods: ["GET", "POST"],
   credentials: true,
   maxAge: 3600
@@ -32,10 +37,13 @@ const server = http.createServer(app);
 // ==================== SOCKET.IO ====================
 const io = socketIO(server, {
   cors: {
-    origin: NODE_ENV === 'production' ? ALLOWED_ORIGINS : "*",
+    origin: NODE_ENV === 'production'
+      ? ALLOWED_ORIGINS
+      : "*",
     methods: ["GET", "POST"],
     credentials: true
   },
+
   transports: ['websocket', 'polling'],
   maxHttpBufferSize: 1e6,
   pingTimeout: 60000,
@@ -57,9 +65,11 @@ peerServer.on('error', (err) => {
   logger.error(`PeerJS Error: ${err.message}`);
 });
 
-// ==================== ARQUIVOS ESTÁTICOS ====================
+// ==================== ESTÁTICOS ====================
 app.use(express.static(path.join(__dirname), {
-  maxAge: NODE_ENV === 'production' ? '1d' : 0
+  maxAge: NODE_ENV === 'production'
+    ? '1d'
+    : 0
 }));
 
 // ==================== ROTAS ====================
@@ -76,6 +86,7 @@ app.get('/web-tester.html', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -83,21 +94,25 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ==================== GERENCIAMENTO DE SALAS ====================
+// ==================== SALAS ====================
 let rooms = {};
 
 // Buscar sala do usuário
 const getUserRoom = (socketId) => {
+
   for (const room in rooms) {
+
     if (rooms[room][socketId]) {
       return room;
     }
   }
+
   return null;
 };
 
 // Atualizar presença
 const broadcastPresence = (room) => {
+
   if (!rooms[room]) return;
 
   const userList = Object.values(rooms[room]).map(user => ({
@@ -113,7 +128,7 @@ const broadcastPresence = (room) => {
   );
 };
 
-// ==================== SOCKET.IO ====================
+// ==================== SOCKET CONNECTION ====================
 io.on('connection', (socket) => {
 
   logger.success(`Novo cliente conectado: ${socket.id}`);
@@ -124,39 +139,38 @@ io.on('connection', (socket) => {
     try {
 
       if (!data?.room || !data?.peerId || !data?.name) {
+
         return socket.emit('error', {
           message: 'Dados incompletos'
         });
       }
 
-      const { room, peerId, name } = data;
+      const room = data.room.trim();
+      const peerId = data.peerId.trim();
+      const name = data.name.trim();
 
-      const cleanRoom = room.trim();
-      const cleanPeerId = peerId.trim();
-      const cleanName = name.trim();
+      socket.join(room);
 
-      socket.join(cleanRoom);
-
-      if (!rooms[cleanRoom]) {
-        rooms[cleanRoom] = {};
+      if (!rooms[room]) {
+        rooms[room] = {};
       }
 
-      const currentRoom = rooms[cleanRoom];
+      const currentRoom = rooms[room];
 
-      // ==================== PREVENÇÃO DE DUPLICADOS ====================
+      // ==================== EVITAR DUPLICADOS ====================
       let replaced = false;
 
       for (const [existingSocketId, user] of Object.entries(currentRoom)) {
 
         if (
-          user.peerId === cleanPeerId ||
-          user.name.toLowerCase() === cleanName.toLowerCase()
+          user.peerId === peerId ||
+          user.name.toLowerCase() === name.toLowerCase()
         ) {
 
           if (existingSocketId !== socket.id) {
 
             logger.warn(
-              `Removendo usuário duplicado: ${user.name} (${existingSocketId})`
+              `Usuário duplicado removido: ${user.name}`
             );
 
             delete currentRoom[existingSocketId];
@@ -166,20 +180,21 @@ io.on('connection', (socket) => {
         }
       }
 
-      // ==================== REGISTRO ====================
+      // ==================== REGISTRAR ====================
       currentRoom[socket.id] = {
-        peerId: cleanPeerId,
-        name: cleanName,
+        peerId,
+        name,
+        room,
         isTalking: false,
-        room: cleanRoom,
         joinedAt: new Date().toISOString()
       };
 
       logger.success(
-        `${replaced ? '🔄 Reconectado' : '✅ Registrado'}: ${cleanName} em [${cleanRoom}]`
+        `${replaced ? '🔄 Reconectado' : '✅ Registrado'}: ${name} em [${room}]`
       );
 
-      broadcastPresence(cleanRoom);
+      // Atualizar presença
+      broadcastPresence(room);
 
       socket.emit('registered', {
         success: true,
@@ -188,15 +203,15 @@ io.on('connection', (socket) => {
 
     } catch (err) {
 
-      logger.error(`Erro no register: ${err.message}`);
+      logger.error(`Erro register: ${err.message}`);
 
       socket.emit('error', {
-        message: 'Erro interno ao registrar'
+        message: 'Erro interno'
       });
     }
   });
 
-  // ==================== LISTAR USUÁRIOS ====================
+  // ==================== USUÁRIOS ATIVOS ====================
   socket.on('get_active_users', (callback) => {
 
     try {
@@ -222,7 +237,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ==================== TALKING STATE ====================
+  // ==================== TALKING ====================
   socket.on('talking_state', (data) => {
 
     try {
@@ -256,15 +271,17 @@ io.on('connection', (socket) => {
   });
 
   // ==================== RELÉ WEBRTC ====================
+  // Compatível Android + Web + PeerJS
 
-  // Offer SDP
   socket.on('offer', (data) => {
 
     try {
 
-      if (!data?.room) return;
+      const target = data.to || getUserRoom(socket.id);
 
-      socket.to(data.room).emit('offer', data);
+      if (!target) return;
+
+      socket.to(target).emit('offer', data);
 
     } catch (err) {
 
@@ -272,14 +289,15 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Answer SDP
   socket.on('answer', (data) => {
 
     try {
 
-      if (!data?.room) return;
+      const target = data.to || getUserRoom(socket.id);
 
-      socket.to(data.room).emit('answer', data);
+      if (!target) return;
+
+      socket.to(target).emit('answer', data);
 
     } catch (err) {
 
@@ -287,14 +305,15 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ICE Candidate
   socket.on('candidate', (data) => {
 
     try {
 
-      if (!data?.room) return;
+      const target = data.to || getUserRoom(socket.id);
 
-      socket.to(data.room).emit('candidate', data);
+      if (!target) return;
+
+      socket.to(target).emit('candidate', data);
 
     } catch (err) {
 
@@ -315,9 +334,11 @@ io.on('connection', (socket) => {
 
       const user = rooms[userRoom][socket.id];
 
-      logger.warn(`Desconexão: ${user.name} (${socket.id})`);
+      logger.warn(
+        `Desconectado: ${user.name} (${socket.id})`
+      );
 
-      // Remove indicador de fala
+      // Remover indicador de fala
       if (user.isTalking) {
 
         socket.to(userRoom).emit('user_talking', {
@@ -327,15 +348,17 @@ io.on('connection', (socket) => {
         });
       }
 
-      // Remove usuário
+      // Remover usuário
       delete rooms[userRoom][socket.id];
 
-      // Remove sala vazia
+      // Remover sala vazia
       if (Object.keys(rooms[userRoom]).length === 0) {
 
         delete rooms[userRoom];
 
-        logger.info(`Sala [${userRoom}] removida (vazia)`);
+        logger.info(
+          `Sala [${userRoom}] removida`
+        );
 
       } else {
 
@@ -344,7 +367,7 @@ io.on('connection', (socket) => {
 
     } catch (err) {
 
-      logger.error(`Erro no disconnect: ${err.message}`);
+      logger.error(`Erro disconnect: ${err.message}`);
     }
   });
 
@@ -357,7 +380,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// ==================== ERROR HANDLER ====================
+// ==================== EXPRESS ERROR ====================
 app.use((err, req, res, next) => {
 
   logger.error(`Express Error: ${err.message}`);
@@ -377,7 +400,7 @@ app.use((req, res) => {
   });
 });
 
-// ==================== START SERVER ====================
+// ==================== START ====================
 server.listen(PORT, () => {
 
   logger.success(
