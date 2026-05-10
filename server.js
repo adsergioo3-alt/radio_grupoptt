@@ -29,6 +29,7 @@ app.use(cors({
 
 const server = http.createServer(app);
 
+// ==================== SOCKET.IO ====================
 const io = socketIO(server, {
   cors: {
     origin: NODE_ENV === 'production' ? ALLOWED_ORIGINS : "*",
@@ -41,12 +42,13 @@ const io = socketIO(server, {
   pingInterval: 25000
 });
 
-// PeerJS
+// ==================== PEERJS ====================
 const peerServer = ExpressPeerServer(server, {
   debug: NODE_ENV === 'development',
   path: '/peerjs',
   proxied: true,
-  allow_discovery: false
+  allow_discovery: false,
+  pingInterval: 5000
 });
 
 app.use(peerServer);
@@ -55,38 +57,49 @@ peerServer.on('error', (err) => {
   logger.error(`PeerJS Error: ${err.message}`);
 });
 
-// Servir arquivos estáticos
-app.use(express.static(path.join(__dirname), { 
-  maxAge: NODE_ENV === 'production' ? '1d' : 0 
+// ==================== ARQUIVOS ESTÁTICOS ====================
+app.use(express.static(path.join(__dirname), {
+  maxAge: NODE_ENV === 'production' ? '1d' : 0
 }));
 
 // ==================== ROTAS ====================
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-app.get('/grupo.html', (req, res) => res.sendFile(path.join(__dirname, 'grupo.html')));
-app.get('/web-tester.html', (req, res) => res.sendFile(path.join(__dirname, 'web-tester.html')));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/grupo.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'grupo.html'));
+});
+
+app.get('/web-tester.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'web-tester.html'));
+});
 
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'ok', 
+  res.status(200).json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
-    rooms: Object.keys(rooms).length 
+    rooms: Object.keys(rooms).length
   });
 });
 
-// ==================== ROOM MANAGEMENT ====================
+// ==================== GERENCIAMENTO DE SALAS ====================
 let rooms = {};
 
-// Funções auxiliares
+// Buscar sala do usuário
 const getUserRoom = (socketId) => {
   for (const room in rooms) {
-    if (rooms[room][socketId]) return room;
+    if (rooms[room][socketId]) {
+      return room;
+    }
   }
   return null;
 };
 
+// Atualizar presença
 const broadcastPresence = (room) => {
   if (!rooms[room]) return;
-  
+
   const userList = Object.values(rooms[room]).map(user => ({
     peerId: user.peerId,
     name: user.name,
@@ -94,44 +107,66 @@ const broadcastPresence = (room) => {
   }));
 
   io.to(room).emit('presence', userList);
-  logger.info(`Presença atualizada em [${room}] → ${userList.length} usuários`);
+
+  logger.info(
+    `Presença atualizada em [${room}] → ${userList.length} usuários`
+  );
 };
 
 // ==================== SOCKET.IO ====================
 io.on('connection', (socket) => {
+
   logger.success(`Novo cliente conectado: ${socket.id}`);
 
   // ==================== REGISTER ====================
   socket.on('register', (data) => {
+
     try {
+
       if (!data?.room || !data?.peerId || !data?.name) {
-        return socket.emit('error', { message: 'Dados incompletos' });
+        return socket.emit('error', {
+          message: 'Dados incompletos'
+        });
       }
 
       const { room, peerId, name } = data;
+
       const cleanRoom = room.trim();
       const cleanPeerId = peerId.trim();
       const cleanName = name.trim();
 
       socket.join(cleanRoom);
 
-      if (!rooms[cleanRoom]) rooms[cleanRoom] = {};
+      if (!rooms[cleanRoom]) {
+        rooms[cleanRoom] = {};
+      }
 
       const currentRoom = rooms[cleanRoom];
 
-      // === PREVENÇÃO DE DUPLICATAS ===
+      // ==================== PREVENÇÃO DE DUPLICADOS ====================
       let replaced = false;
+
       for (const [existingSocketId, user] of Object.entries(currentRoom)) {
-        if (user.peerId === cleanPeerId || user.name.toLowerCase() === cleanName.toLowerCase()) {
+
+        if (
+          user.peerId === cleanPeerId ||
+          user.name.toLowerCase() === cleanName.toLowerCase()
+        ) {
+
           if (existingSocketId !== socket.id) {
-            logger.warn(`Removendo usuário duplicado: ${user.name} (${existingSocketId})`);
+
+            logger.warn(
+              `Removendo usuário duplicado: ${user.name} (${existingSocketId})`
+            );
+
             delete currentRoom[existingSocketId];
           }
+
           replaced = true;
         }
       }
 
-      // Registra / Atualiza usuário
+      // ==================== REGISTRO ====================
       currentRoom[socket.id] = {
         peerId: cleanPeerId,
         name: cleanName,
@@ -140,38 +175,70 @@ io.on('connection', (socket) => {
         joinedAt: new Date().toISOString()
       };
 
-      logger.success(`${replaced ? '🔄 Reconectado' : '✅ Registrado'}: ${cleanName} em [${cleanRoom}]`);
+      logger.success(
+        `${replaced ? '🔄 Reconectado' : '✅ Registrado'}: ${cleanName} em [${cleanRoom}]`
+      );
 
       broadcastPresence(cleanRoom);
-      socket.emit('registered', { success: true, reconnected: replaced });
+
+      socket.emit('registered', {
+        success: true,
+        reconnected: replaced
+      });
 
     } catch (err) {
+
       logger.error(`Erro no register: ${err.message}`);
-      socket.emit('error', { message: 'Erro interno ao registrar' });
+
+      socket.emit('error', {
+        message: 'Erro interno ao registrar'
+      });
     }
   });
 
-  // ==================== OUTROS EVENTOS ====================
+  // ==================== LISTAR USUÁRIOS ====================
   socket.on('get_active_users', (callback) => {
+
     try {
+
       const userRoom = getUserRoom(socket.id);
+
       if (typeof callback === 'function') {
-        callback(userRoom && rooms[userRoom] ? Object.values(rooms[userRoom]) : []);
+
+        callback(
+          userRoom && rooms[userRoom]
+            ? Object.values(rooms[userRoom])
+            : []
+        );
       }
+
     } catch (err) {
+
       logger.error(`Erro get_active_users: ${err.message}`);
-      if (typeof callback === 'function') callback([]);
+
+      if (typeof callback === 'function') {
+        callback([]);
+      }
     }
   });
 
+  // ==================== TALKING STATE ====================
   socket.on('talking_state', (data) => {
+
     try {
-      if (typeof data?.isTalking !== 'boolean') return;
+
+      if (typeof data?.isTalking !== 'boolean') {
+        return;
+      }
 
       const userRoom = getUserRoom(socket.id);
-      if (!userRoom || !rooms[userRoom]?.[socket.id]) return;
+
+      if (!userRoom || !rooms[userRoom]?.[socket.id]) {
+        return;
+      }
 
       const user = rooms[userRoom][socket.id];
+
       user.isTalking = data.isTalking;
 
       socket.to(userRoom).emit('user_talking', {
@@ -181,22 +248,78 @@ io.on('connection', (socket) => {
       });
 
       broadcastPresence(userRoom);
+
     } catch (err) {
+
       logger.error(`Erro talking_state: ${err.message}`);
+    }
+  });
+
+  // ==================== RELÉ WEBRTC ====================
+
+  // Offer SDP
+  socket.on('offer', (data) => {
+
+    try {
+
+      if (!data?.room) return;
+
+      socket.to(data.room).emit('offer', data);
+
+    } catch (err) {
+
+      logger.error(`Erro offer: ${err.message}`);
+    }
+  });
+
+  // Answer SDP
+  socket.on('answer', (data) => {
+
+    try {
+
+      if (!data?.room) return;
+
+      socket.to(data.room).emit('answer', data);
+
+    } catch (err) {
+
+      logger.error(`Erro answer: ${err.message}`);
+    }
+  });
+
+  // ICE Candidate
+  socket.on('candidate', (data) => {
+
+    try {
+
+      if (!data?.room) return;
+
+      socket.to(data.room).emit('candidate', data);
+
+    } catch (err) {
+
+      logger.error(`Erro candidate: ${err.message}`);
     }
   });
 
   // ==================== DISCONNECT ====================
   socket.on('disconnect', () => {
+
     try {
+
       const userRoom = getUserRoom(socket.id);
-      if (!userRoom || !rooms[userRoom]?.[socket.id]) return;
+
+      if (!userRoom || !rooms[userRoom]?.[socket.id]) {
+        return;
+      }
 
       const user = rooms[userRoom][socket.id];
 
       logger.warn(`Desconexão: ${user.name} (${socket.id})`);
 
+      // Remove indicador de fala
       if (user.isTalking) {
+
         socket.to(userRoom).emit('user_talking', {
           peerId: user.peerId,
           name: user.name,
@@ -204,39 +327,77 @@ io.on('connection', (socket) => {
         });
       }
 
+      // Remove usuário
       delete rooms[userRoom][socket.id];
 
+      // Remove sala vazia
       if (Object.keys(rooms[userRoom]).length === 0) {
+
         delete rooms[userRoom];
+
         logger.info(`Sala [${userRoom}] removida (vazia)`);
+
       } else {
+
         broadcastPresence(userRoom);
       }
+
     } catch (err) {
+
       logger.error(`Erro no disconnect: ${err.message}`);
     }
   });
 
+  // ==================== SOCKET ERROR ====================
   socket.on('error', (err) => {
-    logger.error(`Socket Error [${socket.id}]: ${err.message}`);
+
+    logger.error(
+      `Socket Error [${socket.id}]: ${err.message}`
+    );
   });
 });
 
-// ==================== ERROR HANDLERS ====================
+// ==================== ERROR HANDLER ====================
 app.use((err, req, res, next) => {
+
   logger.error(`Express Error: ${err.message}`);
-  res.status(500).json({ error: NODE_ENV === 'development' ? err.message : 'Erro interno' });
+
+  res.status(500).json({
+    error: NODE_ENV === 'development'
+      ? err.message
+      : 'Erro interno'
+  });
 });
 
+// ==================== 404 ====================
 app.use((req, res) => {
-  res.status(404).json({ error: 'Rota não encontrada' });
+
+  res.status(404).json({
+    error: 'Rota não encontrada'
+  });
 });
 
-// ==================== START ====================
+// ==================== START SERVER ====================
 server.listen(PORT, () => {
-  logger.success(`🚀 Servidor rodando em http://localhost:${PORT}`);
+
+  logger.success(
+    `🚀 Servidor rodando em http://localhost:${PORT}`
+  );
+
   logger.info(`Modo: ${NODE_ENV}`);
 });
 
-process.on('SIGTERM', () => { logger.warn('SIGTERM recebido'); server.close(); });
-process.on('SIGINT', () => { logger.warn('SIGINT recebido'); server.close(); });
+// ==================== FINALIZAÇÃO ====================
+process.on('SIGTERM', () => {
+
+  logger.warn('SIGTERM recebido');
+
+  server.close();
+});
+
+process.on('SIGINT', () => {
+
+  logger.warn('SIGINT recebido');
+
+  server.close();
+});
