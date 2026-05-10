@@ -2,48 +2,37 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PTT Radio - Validador de Backend</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PTT Radio - Cliente</title>
     <script src="https://radio-grupoptt.onrender.com/socket.io/socket.io.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
             --primary: #00ff00;
+            --danger: #ff4444;
             --bg: #121212;
             --card: #1e1e1e;
-            --text: #e0e0e0;
         }
         body {
-            font-family: 'Segoe UI', Arial, sans-serif;
+            font-family: 'Segoe UI', sans-serif;
             background-color: var(--bg);
-            color: var(--text);
+            color: white;
             margin: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
-            min-height: 100vh;
-        }
-        .container {
-            width: 90%;
-            max-width: 1000px;
-            padding: 20px;
-        }
-        .header {
-            text-align: center;
-            padding: 20px 0;
-            border-bottom: 1px solid #333;
-            margin-bottom: 30px;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
         }
         .setup-box {
             background: var(--card);
             padding: 25px;
             border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
             display: flex;
             flex-direction: column;
             gap: 15px;
-            max-width: 400px;
-            margin: 0 auto;
+            width: 300px;
         }
         input {
             padding: 12px;
@@ -51,220 +40,147 @@
             border: 1px solid #444;
             background: #252525;
             color: white;
-            font-size: 16px;
         }
-        button {
-            padding: 12px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        button:hover { background-color: #0056b3; }
-        
-        #video-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 20px;
-            margin-top: 30px;
-        }
-        .video-container {
-            position: relative;
-            background: #000;
-            border-radius: 10px;
-            overflow: hidden;
-            border: 3px solid #333;
-            aspect-ratio: 4/3;
-        }
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .user-label {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 13px;
-        }
-        /* Efeito visual quando o usuário estiver falando */
-        .talking {
-            border-color: var(--primary) !important;
-            box-shadow: 0 0 15px var(--primary);
-        }
-        #status-bar {
-            margin-top: 15px;
-            font-size: 14px;
-            color: #888;
+        #ptt-container {
+            display: none;
             text-align: center;
         }
+        /* O Botão PTT */
+        #ptt-btn {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            border: 8px solid #333;
+            background: #222;
+            color: #555;
+            font-size: 24px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #ptt-btn.active {
+            border-color: var(--primary);
+            color: var(--primary);
+            box-shadow: 0 0 30px var(--primary);
+            transform: scale(0.95);
+        }
+        #status { margin-top: 20px; color: #888; }
+        .user-list { margin-top: 10px; font-size: 0.9em; color: var(--primary); }
     </style>
 </head>
 <body>
 
-    <div class="container">
-        <div class="header">
-            <h1>PTT Radio Validator</h1>
-            <p>Teste de Conexão: <span style="color: var(--primary)">https://radio-grupoptt.onrender.com</span></p>
-        </div>
+    <div id="setup-area" class="setup-box">
+        <h2 style="text-align:center">PTT Radio</h2>
+        <input type="text" id="roomInput" placeholder="Sala" value="sala-teste">
+        <input type="text" id="nameInput" placeholder="Seu Nome">
+        <button onclick="joinRoom()" style="padding:12px; background: #007bff; color:white; border:none; border-radius:6px; font-weight:bold;">ENTRAR</button>
+    </div>
 
-        <div id="setup-area" class="setup-box">
-            <input type="text" id="roomInput" placeholder="ID da Sala (ex: sala-teste)">
-            <input type="text" id="nameInput" placeholder="Seu Nome">
-            <button id="joinBtn">Conectar ao Servidor</button>
-        </div>
-
-        <div id="status-bar">Aguardando ação...</div>
-
-        <div id="video-grid">
-            </div>
+    <div id="ptt-container">
+        <div id="user-info"></div>
+        <button id="ptt-btn">PTT</button>
+        <div id="status">Pressione e segure para falar</div>
+        <div id="active-users" class="user-list"></div>
     </div>
 
     <script>
-        // Configurações do Servidor
         const SERVER_URL = 'https://radio-grupoptt.onrender.com';
-        const socket = io(SERVER_URL, { secure: true });
-        
-        const videoGrid = document.getElementById('video-grid');
-        const statusMsg = document.getElementById('status-bar');
-        const joinBtn = document.getElementById('joinBtn');
-
-        let myPeer;
-        let myStream;
+        const socket = io(SERVER_URL);
+        let myPeer, myStream, currentRoom, myName;
         const peers = {};
 
-        // 1. Inicializar PeerJS configurado para o Render (Proxy Seguro)
-        function initPeer(peerId) {
+        async function joinRoom() {
+            currentRoom = document.getElementById('roomInput').value;
+            myName = document.getElementById('nameInput').value;
+
+            if (!currentRoom || !myName) return alert("Preencha tudo!");
+
+            try {
+                // Captura apenas ÁUDIO
+                myStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                // Começa com microfone desativado (mudo)
+                myStream.getAudioTracks()[0].enabled = false;
+
+                initPeer();
+                
+                document.getElementById('setup-area').style.display = 'none';
+                document.getElementById('ptt-container').style.display = 'block';
+                document.getElementById('user-info').innerText = `Logado como: ${myName}`;
+            } catch (err) {
+                alert("Erro ao acessar microfone. Verifique o HTTPS.");
+            }
+        }
+
+        function initPeer() {
+            const peerId = 'ptt-' + Math.random().toString(36).substr(2, 7);
             myPeer = new Peer(peerId, {
                 host: 'radio-grupoptt.onrender.com',
                 path: '/peerjs',
                 port: 443,
-                secure: true,
-                debug: 1 // Reduzido para não poluir muito o console
+                secure: true
             });
 
             myPeer.on('open', id => {
-                statusMsg.innerText = `Status: Conectado ao PeerJS (ID: ${id})`;
-                console.log('ID PeerJS aberto:', id);
+                socket.emit('register', { room: currentRoom, peerId: id, name: myName });
             });
 
-            // Receber chamadas de outros usuários
+            // Receber áudio de outros
             myPeer.on('call', call => {
                 call.answer(myStream);
-                const video = document.createElement('video');
-                call.on('stream', userVideoStream => {
-                    addVideoStream(video, userVideoStream, call.peer, "Participante");
+                const audio = document.createElement('audio');
+                call.on('stream', remoteStream => {
+                    audio.srcObject = remoteStream;
+                    audio.play();
                 });
-            });
-
-            myPeer.on('error', err => {
-                statusMsg.innerText = `Erro PeerJS: ${err.type}`;
-                console.error(err);
             });
         }
 
-        // 2. Lógica para entrar na sala
-        joinBtn.addEventListener('click', async () => {
-            const room = document.getElementById('roomInput').value;
-            const name = document.getElementById('nameInput').value;
-
-            if (!room || !name) return alert("Por favor, preencha a Sala e seu Nome.");
-
-            joinBtn.disabled = true;
-            statusMsg.innerText = "Solicitando permissão de mídia...";
-
-            try {
-                // Solicita Câmera e Microfone
-                myStream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                    audio: true
-                });
-
-                // Mostra vídeo local
-                const myVideo = document.createElement('video');
-                addVideoStream(myVideo, myStream, 'me', name, true);
-
-                // Cria ID Único e inicializa PeerJS
-                const generatedId = 'user-' + Math.random().toString(36).substr(2, 7);
-                initPeer(generatedId);
-
-                // Envia dados para o seu backend via Socket.io
-                socket.emit('register', {
-                    room: room,
-                    peerId: generatedId,
-                    name: name
-                });
-
-                document.getElementById('setup-area').style.display = 'none';
-
-            } catch (err) {
-                console.error("Erro ao acessar mídia:", err);
-                alert("Erro: Certifique-se de estar usando HTTPS e permita o acesso à câmera/microfone.");
-                joinBtn.disabled = false;
-            }
-        });
-
-        // 3. Handlers do Socket.io (Seu Backend envia estes eventos)
         socket.on('presence', users => {
+            const list = users.filter(u => u.name !== myName).map(u => u.name);
+            document.getElementById('active-users').innerText = list.length ? "Online: " + list.join(', ') : "Sozinho na sala";
+            
             users.forEach(user => {
-                // Conectar a novos usuários que não sou eu e não estou conectado ainda
                 if (user.peerId !== myPeer.id && !peers[user.peerId]) {
-                    connectToNewUser(user.peerId, myStream, user.name);
+                    const call = myPeer.call(user.peerId, myStream);
+                    const audio = document.createElement('audio');
+                    call.on('stream', remoteStream => {
+                        audio.srcObject = remoteStream;
+                        audio.play();
+                    });
+                    peers[user.peerId] = call;
                 }
             });
         });
 
-        socket.on('user_talking', data => {
-            const container = document.getElementById('container-' + data.peerId);
-            if (container) {
-                if (data.isTalking) container.classList.add('talking');
-                else container.classList.remove('talking');
-            }
-        });
-
-        // 4. Funções de Mídia/Vídeo
-        function connectToNewUser(peerId, stream, userName) {
-            console.log('Chamando usuário:', peerId);
-            const call = myPeer.call(peerId, stream);
-            const video = document.createElement('video');
-
-            call.on('stream', userVideoStream => {
-                addVideoStream(video, userVideoStream, peerId, userName);
-            });
-
-            call.on('close', () => {
-                const container = document.getElementById('container-' + peerId);
-                if (container) container.remove();
-            });
-
-            peers[peerId] = call;
+        // Lógica do Botão PTT
+        const pttBtn = document.getElementById('ptt-btn');
+        
+        function startTalking() {
+            if (!myStream) return;
+            myStream.getAudioTracks()[0].enabled = true;
+            pttBtn.classList.add('active');
+            socket.emit('user_talking', { peerId: myPeer.id, isTalking: true });
         }
 
-        function addVideoStream(video, stream, id, label, isMuted = false) {
-            const container = document.createElement('div');
-            container.className = 'video-container';
-            container.id = 'container-' + id;
-
-            const nameTag = document.createElement('div');
-            nameTag.className = 'user-label';
-            nameTag.innerText = label;
-
-            video.srcObject = stream;
-            if (isMuted) video.muted = true; // Muta o próprio vídeo para evitar eco
-
-            video.addEventListener('loadedmetadata', () => {
-                video.play();
-            });
-
-            container.append(video);
-            container.append(nameTag);
-            videoGrid.append(container);
+        function stopTalking() {
+            if (!myStream) return;
+            myStream.getAudioTracks()[0].enabled = false;
+            pttBtn.classList.remove('active');
+            socket.emit('user_talking', { peerId: myPeer.id, isTalking: false });
         }
+
+        // Eventos Mouse
+        pttBtn.addEventListener('mousedown', startTalking);
+        pttBtn.addEventListener('mouseup', stopTalking);
+        pttBtn.addEventListener('mouseleave', stopTalking);
+
+        // Eventos Touch (Mobile)
+        pttBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startTalking(); });
+        pttBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopTalking(); });
+
     </script>
 </body>
 </html>
