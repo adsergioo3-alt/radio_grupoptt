@@ -1,6 +1,3 @@
-```javascript
-// ==================== server.js ====================
-
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -8,12 +5,15 @@ const { ExpressPeerServer } = require('peer');
 const socketIO = require('socket.io');
 const cors = require('cors');
 
+// ================= CONFIG =================
+
 const PORT = process.env.PORT || 3000;
-const NODE_ENV = process.env.NODE_ENV || 'development';
 
 const app = express();
 
 const server = http.createServer(app);
+
+// ================= SOCKET.IO =================
 
 const io = socketIO(server, {
   cors: {
@@ -23,7 +23,7 @@ const io = socketIO(server, {
   transports: ['websocket', 'polling']
 });
 
-// ==================== PEERJS ====================
+// ================= PEER SERVER =================
 
 const peerServer = ExpressPeerServer(server, {
   debug: true,
@@ -35,7 +35,7 @@ const peerServer = ExpressPeerServer(server, {
 
 app.use(peerServer);
 
-// ==================== STATIC ====================
+// ================= STATIC =================
 
 app.use(express.static(path.join(__dirname)));
 
@@ -43,12 +43,12 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// ==================== SALAS ====================
+// ================= ROOMS =================
 
 const rooms = {};
 const peerMap = {};
 
-// ==================== HELPERS ====================
+// ================= HELPERS =================
 
 function getUserRoom(socketId) {
 
@@ -74,20 +74,24 @@ function broadcastPresence(room) {
 
   io.to(room).emit('presence', users);
 
-  console.log(`Presença enviada: ${users.length} usuários`);
+  console.log(`Presenca enviada: ${users.length} usuarios`);
 }
 
-// ==================== SOCKET ====================
+// ================= SOCKET CONNECTION =================
 
 io.on('connection', (socket) => {
 
-  console.log('Novo socket:', socket.id);
+  console.log(`Novo socket conectado: ${socket.id}`);
 
-  // ==================== REGISTER ====================
+  // ================= REGISTER =================
 
   socket.on('register', (data) => {
 
     try {
+
+      if (!data.room || !data.peerId || !data.name) {
+        return;
+      }
 
       const room = data.room;
       const peerId = data.peerId;
@@ -100,16 +104,17 @@ io.on('connection', (socket) => {
       }
 
       rooms[room][socket.id] = {
-        peerId,
-        name,
+        peerId: peerId,
+        name: name,
         isTalking: false
       };
 
-      // MAPEAR peerId -> socket.id
+      // Mapeia peerId -> socket.id
       peerMap[peerId] = socket.id;
 
-      console.log(`${name} entrou em ${room}`);
+      console.log(`${name} entrou na sala ${room}`);
 
+      // Atualiza todos
       broadcastPresence(room);
 
       socket.emit('registered', {
@@ -118,11 +123,11 @@ io.on('connection', (socket) => {
 
     } catch (e) {
 
-      console.log(e);
+      console.log('Erro register:', e.message);
     }
   });
 
-  // ==================== TALKING ====================
+  // ================= TALKING =================
 
   socket.on('talking_state', (data) => {
 
@@ -148,11 +153,11 @@ io.on('connection', (socket) => {
 
     } catch (e) {
 
-      console.log(e);
+      console.log('Erro talking_state:', e.message);
     }
   });
 
-  // ==================== OFFER ====================
+  // ================= OFFER =================
 
   socket.on('offer', (data) => {
 
@@ -161,7 +166,8 @@ io.on('connection', (socket) => {
       const targetSocketId = peerMap[data.to];
 
       if (!targetSocketId) {
-        console.log('Destino offer não encontrado');
+
+        console.log('Destino offer nao encontrado');
         return;
       }
 
@@ -169,11 +175,11 @@ io.on('connection', (socket) => {
 
     } catch (e) {
 
-      console.log(e);
+      console.log('Erro offer:', e.message);
     }
   });
 
-  // ==================== ANSWER ====================
+  // ================= ANSWER =================
 
   socket.on('answer', (data) => {
 
@@ -182,7 +188,8 @@ io.on('connection', (socket) => {
       const targetSocketId = peerMap[data.to];
 
       if (!targetSocketId) {
-        console.log('Destino answer não encontrado');
+
+        console.log('Destino answer nao encontrado');
         return;
       }
 
@@ -190,11 +197,11 @@ io.on('connection', (socket) => {
 
     } catch (e) {
 
-      console.log(e);
+      console.log('Erro answer:', e.message);
     }
   });
 
-  // ==================== CANDIDATE ====================
+  // ================= CANDIDATE =================
 
   socket.on('candidate', (data) => {
 
@@ -203,7 +210,8 @@ io.on('connection', (socket) => {
       const targetSocketId = peerMap[data.to];
 
       if (!targetSocketId) {
-        console.log('Destino candidate não encontrado');
+
+        console.log('Destino candidate nao encontrado');
         return;
       }
 
@@ -211,11 +219,11 @@ io.on('connection', (socket) => {
 
     } catch (e) {
 
-      console.log(e);
+      console.log('Erro candidate:', e.message);
     }
   });
 
-  // ==================== DISCONNECT ====================
+  // ================= DISCONNECT =================
 
   socket.on('disconnect', () => {
 
@@ -229,15 +237,20 @@ io.on('connection', (socket) => {
 
       if (!user) return;
 
-      console.log(`${user.name} saiu`);
+      console.log(`${user.name} desconectou`);
 
+      // Remove do mapa
       delete peerMap[user.peerId];
 
+      // Remove da sala
       delete rooms[room][socket.id];
 
+      // Remove sala vazia
       if (Object.keys(rooms[room]).length === 0) {
 
         delete rooms[room];
+
+        console.log(`Sala ${room} removida`);
 
       } else {
 
@@ -246,15 +259,21 @@ io.on('connection', (socket) => {
 
     } catch (e) {
 
-      console.log(e);
+      console.log('Erro disconnect:', e.message);
     }
+  });
+
+  // ================= SOCKET ERROR =================
+
+  socket.on('error', (err) => {
+
+    console.log('Socket error:', err);
   });
 });
 
-// ==================== START ====================
+// ================= START =================
 
 server.listen(PORT, () => {
 
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor iniciado na porta ${PORT}`);
 });
-```
