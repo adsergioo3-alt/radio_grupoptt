@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Web Tester</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    label, input, button, select, textarea { display: block; margin: 10px 0; }
+    textarea { width: 100%; height: 80px; }
+    #response { white-space: pre-wrap; background: #f4f4f4; padding: 10px; border-radius: 4px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Testador de API</h1>
+  <form id="apiForm">
+    <label for="method">Método HTTP:</label>
+    <select id="method">
+      <option value="GET">GET</option>
+      <option value="POST">POST</option>
+      <option value="PUT">PUT</option>
+      <option value="DELETE">DELETE</option>
+    </select>
+    <label for="endpoint">Endpoint (ex: /api/test):</label>
+    <input type="text" id="endpoint" value="/" required>
+    <label for="body">Body (JSON, opcional):</label>
+    <textarea id="body"></textarea>
+    <button type="submit">Enviar</button>
+  </form>
+  <div id="response"></div>
+  <script>
+    document.getElementById('apiForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const method = document.getElementById('method').value;
+      const endpoint = document.getElementById('endpoint').value;
+      let body = document.getElementById('body').value;
+      let url = window.location.origin + endpoint;
+      let options = { method };
+      if (body && (method === 'POST' || method === 'PUT')) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = body;
+      }
+      try {
+        const res = await fetch(url, options);
+        const text = await res.text();
+        document.getElementById('response').textContent = `Status: ${res.status}\n${text}`;
+      } catch (err) {
+        document.getElementById('response').textContent = 'Erro: ' + err;
+      }
+    });
+  </script>
+</body>
+</html>
