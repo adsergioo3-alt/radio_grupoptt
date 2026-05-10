@@ -3,129 +3,268 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Validador PeerJS & Socket.io</title>
-    <script src="/socket.io/socket.io.js"></script>
+    <title>PTT Radio - Validador de Backend</title>
+    <script src="https://radio-grupoptt.onrender.com/socket.io/socket.io.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; }
-        #video-grid { display: grid; grid-template-columns: repeat(auto-fill, 300px); gap: 10px; padding: 20px; }
-        video { width: 100%; background: #222; border-radius: 8px; border: 2px solid #444; }
-        .talking { border-color: #00ff00 !important; box-shadow: 0 0 10px #00ff00; }
-        .controls { background: #222; padding: 20px; border-radius: 10px; margin-top: 20px; }
-        input { padding: 8px; border-radius: 4px; border: none; margin-right: 5px; }
-        button { padding: 8px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:disabled { background: #555; }
+        :root {
+            --primary: #00ff00;
+            --bg: #121212;
+            --card: #1e1e1e;
+            --text: #e0e0e0;
+        }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            width: 90%;
+            max-width: 1000px;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 30px;
+        }
+        .setup-box {
+            background: var(--card);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        input {
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background: #252525;
+            color: white;
+            font-size: 16px;
+        }
+        button {
+            padding: 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover { background-color: #0056b3; }
+        
+        #video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .video-container {
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 3px solid #333;
+            aspect-ratio: 4/3;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .user-label {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        /* Efeito visual quando o usuário estiver falando */
+        .talking {
+            border-color: var(--primary) !important;
+            box-shadow: 0 0 15px var(--primary);
+        }
+        #status-bar {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #888;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
 
-    <h2>Validador de Chat WebRTC</h2>
-
-    <div class="controls" id="setup">
-        <input type="text" id="roomInput" placeholder="Nome da Sala (ex: sala1)">
-        <input type="text" id="nameInput" placeholder="Seu Nome">
-        <button id="joinBtn">Entrar na Chamada</button>
-    </div>
-
-    <div id="status" style="margin-top: 10px; color: #aaa;">Aguardando conexão...</div>
-
-    <div id="video-grid">
+    <div class="container">
+        <div class="header">
+            <h1>PTT Radio Validator</h1>
+            <p>Teste de Conexão: <span style="color: var(--primary)">https://radio-grupoptt.onrender.com</span></p>
         </div>
 
+        <div id="setup-area" class="setup-box">
+            <input type="text" id="roomInput" placeholder="ID da Sala (ex: sala-teste)">
+            <input type="text" id="nameInput" placeholder="Seu Nome">
+            <button id="joinBtn">Conectar ao Servidor</button>
+        </div>
+
+        <div id="status-bar">Aguardando ação...</div>
+
+        <div id="video-grid">
+            </div>
+    </div>
+
     <script>
-        const socket = io('/');
+        // Configurações do Servidor
+        const SERVER_URL = 'https://radio-grupoptt.onrender.com';
+        const socket = io(SERVER_URL, { secure: true });
+        
         const videoGrid = document.getElementById('video-grid');
-        const statusDiv = document.getElementById('status');
+        const statusMsg = document.getElementById('status-bar');
+        const joinBtn = document.getElementById('joinBtn');
+
         let myPeer;
         let myStream;
         const peers = {};
 
-        // 1. Configurar o PeerJS usando o servidor que você criou
+        // 1. Inicializar PeerJS configurado para o Render (Proxy Seguro)
         function initPeer(peerId) {
             myPeer = new Peer(peerId, {
-                host: '/',
+                host: 'radio-grupoptt.onrender.com',
                 path: '/peerjs',
-                port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80)
+                port: 443,
+                secure: true,
+                debug: 1 // Reduzido para não poluir muito o console
             });
 
             myPeer.on('open', id => {
-                statusDiv.innerText = `Conectado ao PeerJS com ID: ${id}`;
+                statusMsg.innerText = `Status: Conectado ao PeerJS (ID: ${id})`;
+                console.log('ID PeerJS aberto:', id);
             });
 
-            // Receber chamada
+            // Receber chamadas de outros usuários
             myPeer.on('call', call => {
                 call.answer(myStream);
                 const video = document.createElement('video');
                 call.on('stream', userVideoStream => {
-                    addVideoStream(video, userVideoStream, call.peer);
+                    addVideoStream(video, userVideoStream, call.peer, "Participante");
                 });
+            });
+
+            myPeer.on('error', err => {
+                statusMsg.innerText = `Erro PeerJS: ${err.type}`;
+                console.error(err);
             });
         }
 
-        // 2. Ação de Entrar na Sala
-        document.getElementById('joinBtn').addEventListener('click', async () => {
+        // 2. Lógica para entrar na sala
+        joinBtn.addEventListener('click', async () => {
             const room = document.getElementById('roomInput').value;
             const name = document.getElementById('nameInput').value;
 
-            if (!room || !name) return alert("Preencha sala e nome!");
+            if (!room || !name) return alert("Por favor, preencha a Sala e seu Nome.");
 
-            // Pedir permissão de mídia
-            myStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            addVideoStream(document.createElement('video'), myStream, 'me', true);
+            joinBtn.disabled = true;
+            statusMsg.innerText = "Solicitando permissão de mídia...";
 
-            const tempPeerId = Math.random().toString(36).substr(2, 9);
-            initPeer(tempPeerId);
+            try {
+                // Solicita Câmera e Microfone
+                myStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                });
 
-            // Registrar no Socket.io
-            socket.emit('register', { room, peerId: tempPeerId, name });
-            
-            document.getElementById('setup').style.display = 'none';
+                // Mostra vídeo local
+                const myVideo = document.createElement('video');
+                addVideoStream(myVideo, myStream, 'me', name, true);
+
+                // Cria ID Único e inicializa PeerJS
+                const generatedId = 'user-' + Math.random().toString(36).substr(2, 7);
+                initPeer(generatedId);
+
+                // Envia dados para o seu backend via Socket.io
+                socket.emit('register', {
+                    room: room,
+                    peerId: generatedId,
+                    name: name
+                });
+
+                document.getElementById('setup-area').style.display = 'none';
+
+            } catch (err) {
+                console.error("Erro ao acessar mídia:", err);
+                alert("Erro: Certifique-se de estar usando HTTPS e permita o acesso à câmera/microfone.");
+                joinBtn.disabled = false;
+            }
         });
 
-        // 3. Handlers do Socket.io
+        // 3. Handlers do Socket.io (Seu Backend envia estes eventos)
         socket.on('presence', users => {
-            console.log('Usuários na sala:', users);
             users.forEach(user => {
+                // Conectar a novos usuários que não sou eu e não estou conectado ainda
                 if (user.peerId !== myPeer.id && !peers[user.peerId]) {
-                    connectToNewUser(user.peerId, myStream);
+                    connectToNewUser(user.peerId, myStream, user.name);
                 }
             });
         });
 
         socket.on('user_talking', data => {
-            const video = document.getElementById(data.peerId);
-            if (video) {
-                data.isTalking ? video.classList.add('talking') : video.classList.remove('talking');
+            const container = document.getElementById('container-' + data.peerId);
+            if (container) {
+                if (data.isTalking) container.classList.add('talking');
+                else container.classList.remove('talking');
             }
         });
 
-        // 4. Funções Auxiliares
-        function connectToNewUser(peerId, stream) {
+        // 4. Funções de Mídia/Vídeo
+        function connectToNewUser(peerId, stream, userName) {
+            console.log('Chamando usuário:', peerId);
             const call = myPeer.call(peerId, stream);
             const video = document.createElement('video');
+
             call.on('stream', userVideoStream => {
-                addVideoStream(video, userVideoStream, peerId);
+                addVideoStream(video, userVideoStream, peerId, userName);
             });
-            call.on('close', () => video.remove());
+
+            call.on('close', () => {
+                const container = document.getElementById('container-' + peerId);
+                if (container) container.remove();
+            });
+
             peers[peerId] = call;
         }
 
-        function addVideoStream(video, stream, id, isMuted = false) {
+        function addVideoStream(video, stream, id, label, isMuted = false) {
+            const container = document.createElement('div');
+            container.className = 'video-container';
+            container.id = 'container-' + id;
+
+            const nameTag = document.createElement('div');
+            nameTag.className = 'user-label';
+            nameTag.innerText = label;
+
             video.srcObject = stream;
-            video.id = id;
-            if (isMuted) video.muted = true;
-            video.addEventListener('loadedmetadata', () => video.play());
-            videoGrid.append(video);
+            if (isMuted) video.muted = true; // Muta o próprio vídeo para evitar eco
+
+            video.addEventListener('loadedmetadata', () => {
+                video.play();
+            });
+
+            container.append(video);
+            container.append(nameTag);
+            videoGrid.append(container);
         }
-
-        // Detecção básica de fala (VAD simples para teste)
-        setInterval(() => {
-            if (myStream) {
-                // Aqui você implementaria a lógica de volume. 
-                // Para teste, vamos disparar via console ou botão se quiser validar o evento 'talking_state'
-            }
-        }, 2000);
-
     </script>
 </body>
 </html>
