@@ -5,275 +5,165 @@ const { ExpressPeerServer } = require('peer');
 const socketIO = require('socket.io');
 const cors = require('cors');
 
-// ================= CONFIG =================
-
+// ================= CONFIGURAÇÃO =================
 const PORT = process.env.PORT || 3000;
-
 const app = express();
+
+// Middleware de CORS para permitir requisições do Android e Web
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST"]
+}));
 
 const server = http.createServer(app);
 
 // ================= SOCKET.IO =================
-
+// Configurado para lidar com a instabilidade de redes móveis
 const io = socketIO(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
-  transports: ['websocket', 'polling']
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    },
+    transports: ['websocket', 'polling'],
+    pingTimeout: 60000, 
+    pingInterval: 25000
 });
 
 // ================= PEER SERVER =================
-
+// 'proxied: true' é vital para o funcionamento no Render (HTTPS)
 const peerServer = ExpressPeerServer(server, {
-  debug: true,
-  path: '/peerjs',
-  proxied: true,
-  allow_discovery: false,
-  pingInterval: 5000
+    debug: true,
+    path: '/myapp',
+    proxied: true,
+    allow_discovery: false,
+    pingInterval: 5000
 });
 
-app.use(peerServer);
+// A rota final no Android será: https://radio-grupoptt.onrender.com/peerjs/myapp
+app.use('/peerjs', peerServer);
 
-// ================= STATIC =================
-
-app.use(express.static(path.join(__dirname)));
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// ================= ROOMS =================
-
-const rooms = {};
-const peerMap = {};
+// ================= DATA STORAGE =================
+const rooms = new Map();
+const peerMap = new Map(); // Mapeia peerId -> socket.id
 
 // ================= HELPERS =================
-
 function getUserRoom(socketId) {
-
-  for (const room in rooms) {
-
-    if (rooms[room][socketId]) {
-      return room;
+    for (const [roomName, users] of rooms.entries()) {
+        if (users[socketId]) return roomName;
     }
-  }
-
-  return null;
+    return null;
 }
 
 function broadcastPresence(room) {
+    const roomData = rooms.get(room);
+    if (!roomData) return;
 
-  if (!rooms[room]) return;
+    const users = Object.values(roomData).map(user => ({
+        peerId: user.peerId,
+        name: user.name,
+        isTalking: user.isTalking
+    }));
 
-  const users = Object.values(rooms[room]).map(user => ({
-    peerId: user.peerId,
-    name: user.name,
-    isTalking: user.isTalking
-  }));
-
-  io.to(room).emit('presence', users);
-
-  console.log(`Presenca enviada: ${users.length} usuarios`);
+    io.to(room).emit('presence', users);
+    console.log(`[Sala: ${room}] Usuários ativos: ${users.length}`);
 }
 
 // ================= SOCKET CONNECTION =================
-
 io.on('connection', (socket) => {
-
-  console.log(`Novo socket conectado: ${socket.id}`);
-
-  // ================= REGISTER =================
-
-  socket.on('register', (data) => {
-
-    try {
-
-      if (!data.room || !data.peerId || !data.name) {
-        return;
-      }
-
-      const room = data.room;
-      const peerId = data.peerId;
-      const name = data.name;
-
-      socket.join(room);
-
-      if (!rooms[room]) {
-        rooms[room] = {};
-      }
-
-      rooms[room][socket.id] = {
-        peerId: peerId,
-        name: name,
-        isTalking: false
-      };
-
-      // Mapeia peerId -> socket.id
-      peerMap[peerId] = socket.id;
-
-      console.log(`${name} entrou na sala ${room}`);
-
-      // Atualiza todos
-      broadcastPresence(room);
-
-      socket.emit('registered', {
-        success: true
-      });
-
-    } catch (e) {
-
-      console.log('Erro register:', e.message);
-    }
-  });
-
-  // ================= TALKING =================
-
-  socket.on('talking_state', (data) => {
-
-    try {
-
-      const room = getUserRoom(socket.id);
-
-      if (!room) return;
-
-      const user = rooms[room][socket.id];
-
-      if (!user) return;
-
-      user.isTalking = data.isTalking;
-
-      socket.to(room).emit('user_talking', {
-        peerId: user.peerId,
-        name: user.name,
-        isTalking: data.isTalking
-      });
-
-      broadcastPresence(room);
-
-    } catch (e) {
-
-      console.log('Erro talking_state:', e.message);
-    }
-  });
-
-  // ================= OFFER =================
-
-  socket.on('offer', (data) => {
-
-    try {
-
-      const targetSocketId = peerMap[data.to];
-
-      if (!targetSocketId) {
-
-        console.log('Destino offer nao encontrado');
-        return;
-      }
-
-      io.to(targetSocketId).emit('offer', data);
-
-    } catch (e) {
-
-      console.log('Erro offer:', e.message);
-    }
-  });
-
-  // ================= ANSWER =================
-
-  socket.on('answer', (data) => {
-
-    try {
-
-      const targetSocketId = peerMap[data.to];
-
-      if (!targetSocketId) {
-
-        console.log('Destino answer nao encontrado');
-        return;
-      }
-
-      io.to(targetSocketId).emit('answer', data);
-
-    } catch (e) {
-
-      console.log('Erro answer:', e.message);
-    }
-  });
-
-  // ================= CANDIDATE =================
-
-  socket.on('candidate', (data) => {
-
-    try {
-
-      const targetSocketId = peerMap[data.to];
-
-      if (!targetSocketId) {
-
-        console.log('Destino candidate nao encontrado');
-        return;
-      }
-
-      io.to(targetSocketId).emit('candidate', data);
-
-    } catch (e) {
-
-      console.log('Erro candidate:', e.message);
-    }
-  });
-
-  // ================= DISCONNECT =================
-
-  socket.on('disconnect', () => {
-
-    try {
-
-      const room = getUserRoom(socket.id);
-
-      if (!room) return;
-
-      const user = rooms[room][socket.id];
-
-      if (!user) return;
-
-      console.log(`${user.name} desconectou`);
-
-      // Remove do mapa
-      delete peerMap[user.peerId];
-
-      // Remove da sala
-      delete rooms[room][socket.id];
-
-      // Remove sala vazia
-      if (Object.keys(rooms[room]).length === 0) {
-
-        delete rooms[room];
-
-        console.log(`Sala ${room} removida`);
-
-      } else {
-
-        broadcastPresence(room);
-      }
-
-    } catch (e) {
-
-      console.log('Erro disconnect:', e.message);
-    }
-  });
-
-  // ================= SOCKET ERROR =================
-
-  socket.on('error', (err) => {
-
-    console.log('Socket error:', err);
-  });
+    console.log(`Novo dispositivo conectado: ${socket.id}`);
+
+    // --- Registrar Usuário ---
+    socket.on('register', (data) => {
+        try {
+            const { room, peerId, name } = data;
+            if (!room || !peerId || !name) return;
+
+            socket.join(room);
+
+            if (!rooms.has(room)) {
+                rooms.set(room, {});
+            }
+
+            rooms.get(room)[socket.id] = {
+                peerId,
+                name,
+                isTalking: false
+            };
+
+            peerMap.set(peerId, socket.id);
+            
+            console.log(`[Registro] ${name} entrou na sala: ${room}`);
+            broadcastPresence(room);
+
+            socket.emit('registered', { success: true });
+
+        } catch (e) {
+            console.error('Erro no registro:', e.message);
+        }
+    });
+
+    // --- Estado de Fala (PTT) ---
+    socket.on('talking_state', (data) => {
+        const roomName = getUserRoom(socket.id);
+        if (!roomName) return;
+
+        const roomData = rooms.get(roomName);
+        if (roomData && roomData[socket.id]) {
+            roomData[socket.id].isTalking = data.isTalking;
+
+            // Avisa os outros usuários da sala
+            socket.to(roomName).emit('user_talking', {
+                peerId: roomData[socket.id].peerId,
+                name: roomData[socket.id].name,
+                isTalking: data.isTalking
+            });
+        }
+    });
+
+    // --- Sinalização WebRTC (Relay) ---
+    const relayEvents = ['offer', 'answer', 'candidate'];
+    relayEvents.forEach(eventName => {
+        socket.on(eventName, (data) => {
+            const targetSocketId = peerMap.get(data.to);
+            if (targetSocketId) {
+                io.to(targetSocketId).emit(eventName, data);
+            }
+        });
+    });
+
+    // --- Desconexão ---
+    socket.on('disconnect', () => {
+        const roomName = getUserRoom(socket.id);
+        if (!roomName) return;
+
+        const roomData = rooms.get(roomName);
+        const user = roomData[socket.id];
+
+        if (user) {
+            console.log(`Usuário saiu: ${user.name}`);
+            peerMap.delete(user.peerId);
+            delete roomData[socket.id];
+
+            if (Object.keys(roomData).length === 0) {
+                rooms.delete(roomName);
+            } else {
+                broadcastPresence(roomName);
+            }
+        }
+    });
 });
 
+// ================= ROTAS DE APOIO =================
+
+// Rota de saúde para o Render (evita que o serviço seja marcado como offline)
+app.get('/health', (req, res) => {
+    res.status(200).send('Server is Up');
+});
+
+// Fallback para arquivos estáticos (se houver um index.html na raiz)
+app.use(express.static(path.join(__dirname)));
+
 // ================= START =================
-
-server.listen(PORT, () => {
-
-  console.log(`Servidor iniciado na porta ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
 });
