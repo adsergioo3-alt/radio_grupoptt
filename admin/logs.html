@@ -1,1 +1,47 @@
 
+// ================= LOG SYSTEM =================
+const systemLogs = [];
+const MAX_LOGS = 100; // Mantém apenas os últimos 100 na memória
+
+function addLog(type, message) {
+    const logEntry = {
+        time: new Date().toLocaleTimeString(),
+        type, // 'info', 'error', 'connection'
+        message
+    };
+    systemLogs.push(logEntry);
+    if (systemLogs.length > MAX_LOGS) systemLogs.shift();
+    
+    // Envia em tempo real para quem estiver na página de logs
+    io.to('admin-logs').emit('new-log', logEntry);
+}
+
+// Middleware para capturar logs do console (opcional, mas recomendado)
+const originalLog = console.log;
+const originalError = console.error;
+
+console.log = (...args) => {
+    addLog('info', args.join(' '));
+    originalLog.apply(console, args);
+};
+
+console.error = (...args) => {
+    addLog('error', args.join(' '));
+    originalError.apply(console, args);
+};
+
+// Rota para servir a página de logs
+app.get('/admin/logs', (req, res) => {
+    res.sendFile(path.join(__dirname, 'logs.html'));
+});
+
+// No IO.on('connection'), adicione o join para a sala de logs:
+io.on('connection', (socket) => {
+    // Se o cliente pedir para monitorar logs
+    socket.on('subscribe-logs', () => {
+        socket.join('admin-logs');
+        socket.emit('initial-logs', systemLogs);
+    });
+    
+    // ... resto do seu código de conexão original ...
+});
