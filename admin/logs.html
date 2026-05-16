@@ -1,47 +1,122 @@
 
-// ================= LOG SYSTEM =================
-const systemLogs = [];
-const MAX_LOGS = 100; // Mantém apenas os últimos 100 na memória
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painel de Debug - Logs</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #111;
+            color: #f1f1f1;
+        }
+        header {
+            padding: 16px;
+            background: #171717;
+            border-bottom: 1px solid #333;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 1.4rem;
+        }
+        header p {
+            margin: 4px 0 0;
+            color: #bbb;
+            font-size: 0.95rem;
+        }
+        main {
+            padding: 16px;
+        }
+        #log-count {
+            margin-bottom: 12px;
+            font-size: 0.95rem;
+            color: #ccc;
+        }
+        #logs {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        #logs li {
+            margin-bottom: 8px;
+            padding: 12px;
+            border-radius: 8px;
+            background: #1b1b1b;
+            border: 1px solid #222;
+            font-size: 0.95rem;
+            line-height: 1.4;
+        }
+        #logs li.info { border-left: 4px solid #5cb85c; }
+        #logs li.error { border-left: 4px solid #d9534f; }
+        #logs li.connection { border-left: 4px solid #5bc0de; }
+        .timestamp {
+            display: inline-block;
+            min-width: 80px;
+            color: #88c0d0;
+            margin-right: 12px;
+        }
+        .message {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Painel de Debug</h1>
+        <p>Visualize logs em tempo real do servidor e do painel admin.</p>
+    </header>
+    <main>
+        <div id="log-count">Aguardando logs...</div>
+        <ul id="logs"></ul>
+    </main>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const logsList = document.getElementById('logs');
+        const logCount = document.getElementById('log-count');
+        const logs = [];
 
-function addLog(type, message) {
-    const logEntry = {
-        time: new Date().toLocaleTimeString(),
-        type, // 'info', 'error', 'connection'
-        message
-    };
-    systemLogs.push(logEntry);
-    if (systemLogs.length > MAX_LOGS) systemLogs.shift();
-    
-    // Envia em tempo real para quem estiver na página de logs
-    io.to('admin-logs').emit('new-log', logEntry);
-}
+        function updateCount() {
+            logCount.textContent = `Total de logs exibidos: ${logs.length}`;
+        }
 
-// Middleware para capturar logs do console (opcional, mas recomendado)
-const originalLog = console.log;
-const originalError = console.error;
+        function renderLog(entry) {
+            logs.push(entry);
+            if (logs.length > 100) {
+                logs.shift();
+                logsList.removeChild(logsList.firstChild);
+            }
 
-console.log = (...args) => {
-    addLog('info', args.join(' '));
-    originalLog.apply(console, args);
-};
+            const item = document.createElement('li');
+            item.className = entry.type || 'info';
+            item.innerHTML = `
+                <span class="timestamp">[${entry.time}]</span>
+                <span class="message">${entry.message}</span>
+            `;
 
-console.error = (...args) => {
-    addLog('error', args.join(' '));
-    originalError.apply(console, args);
-};
+            logsList.appendChild(item);
+            logsList.scrollTop = logsList.scrollHeight;
+            updateCount();
+        }
 
-// Rota para servir a página de logs
-app.get('/admin/logs', (req, res) => {
-    res.sendFile(path.join(__dirname, 'logs.html'));
-});
+        socket.on('connect', () => {
+            socket.emit('subscribe-logs');
+        });
 
-// No IO.on('connection'), adicione o join para a sala de logs:
-io.on('connection', (socket) => {
-    // Se o cliente pedir para monitorar logs
-    socket.on('subscribe-logs', () => {
-        socket.join('admin-logs');
-        socket.emit('initial-logs', systemLogs);
-    });
-    
-    // ... resto do seu código de conexão original ...
-});
+        socket.on('initial-logs', (initialLogs) => {
+            logsList.innerHTML = '';
+            initialLogs.forEach(renderLog);
+            updateCount();
+        });
+
+        socket.on('new-log', renderLog);
+
+        socket.on('disconnect', () => {
+            logCount.textContent = 'Desconectado do servidor de logs.';
+        });
+    </script>
+</body>
+</html>

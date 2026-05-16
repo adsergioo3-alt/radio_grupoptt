@@ -59,9 +59,9 @@ console.error = (...args) => {
     originalError.apply(console, args);
 };
 
-// Rota para servir a página de logs
+// Rota para servir a página de logs do painel admin
 app.get('/admin/logs', (req, res) => {
-    res.sendFile(path.join(__dirname, 'logs.html'));
+    res.sendFile(path.join(__dirname, 'admin', 'logs.html'));
 });
 
 // No IO.on('connection'), adicione o join para a sala de logs:
