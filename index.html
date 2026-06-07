@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>PTT Radio - Cliente</title>
-    <script src="https://radio-grupoptt.onrender.com/socket.io/socket.io.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
@@ -87,7 +87,7 @@
     </div>
 
     <script>
-        const SERVER_URL = 'https://radio-grupoptt.onrender.com';
+        const SERVER_URL = window.location.origin;
         const socket = io(SERVER_URL);
         let myPeer, myStream, currentRoom, myName;
         const peers = {};
@@ -117,10 +117,10 @@
         function initPeer() {
             const peerId = 'ptt-' + Math.random().toString(36).substr(2, 7);
             myPeer = new Peer(peerId, {
-                host: 'radio-grupoptt.onrender.com',
+                host: window.location.hostname,
+                port: window.location.port || (location.protocol === 'https:' ? 443 : 80),
                 path: '/peerjs',
-                port: 443,
-                secure: true
+                secure: location.protocol === 'https:'
             });
 
             myPeer.on('open', id => {
@@ -139,9 +139,20 @@
         }
 
         socket.on('presence', users => {
-            const list = users.filter(u => u.name !== myName).map(u => u.name);
-            document.getElementById('active-users').innerText = list.length ? "Online: " + list.join(', ') : "Sozinho na sala";
-            
+            const statusLines = users.map(user => {
+                const talkingIndicator = user.isTalking ? ' 🔊' : '';
+                return user.name + talkingIndicator;
+            });
+
+            document.getElementById('active-users').innerText = statusLines.length ? "Online: " + statusLines.join(', ') : "Sozinho na sala";
+
+            const currentPeerIds = new Set(users.map(user => user.peerId));
+            Object.keys(peers).forEach(peerId => {
+                if (!currentPeerIds.has(peerId)) {
+                    delete peers[peerId];
+                }
+            });
+
             users.forEach(user => {
                 if (user.peerId !== myPeer.id && !peers[user.peerId]) {
                     const call = myPeer.call(user.peerId, myStream);
@@ -153,6 +164,17 @@
                     peers[user.peerId] = call;
                 }
             });
+        });
+
+        socket.on('user_talking', (data) => {
+            if (!data || !data.name) return;
+            const statusText = data.isTalking ? `${data.name} está falando...` : `${data.name} parou de falar.`;
+            document.getElementById('status').innerText = statusText;
+            if (!data.isTalking) {
+                setTimeout(() => {
+                    document.getElementById('status').innerText = 'Pressione e segure para falar';
+                }, 1200);
+            }
         });
 
         // Lógica do Botão PTT

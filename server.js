@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -7,12 +8,16 @@ const cors = require('cors');
 
 // ================= CONFIGURAÇÃO =================
 const PORT = process.env.PORT || 3000;
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean) : [];
 const app = express();
+
+app.use(express.json());
 
 // Middleware de CORS para permitir requisições do Android e Web
 app.use(cors({
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : '*',
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
 }));
 
 const server = http.createServer(app);
@@ -21,11 +26,12 @@ const server = http.createServer(app);
 // Configurado para lidar com a instabilidade de redes móveis
 const io = socketIO(server, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+        origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : '*',
+        methods: ["GET", "POST", "PUT", "DELETE"],
+        credentials: true
     },
     transports: ['websocket', 'polling'],
-    pingTimeout: 60000, 
+    pingTimeout: 60000,
     pingInterval: 25000
 });
 // ================= LOG SYSTEM =================
@@ -62,17 +68,6 @@ console.error = (...args) => {
 // Rota para servir a página de logs do painel admin
 app.get('/admin/logs', (req, res) => {
     res.sendFile(path.join(__dirname, 'admin', 'logs.html'));
-});
-
-// No IO.on('connection'), adicione o join para a sala de logs:
-io.on('connection', (socket) => {
-    // Se o cliente pedir para monitorar logs
-    socket.on('subscribe-logs', () => {
-        socket.join('admin-logs');
-        socket.emit('initial-logs', systemLogs);
-    });
-    
-    // ... resto do seu código de conexão original ...
 });
 
 // ================= PEER SERVER =================
@@ -116,6 +111,15 @@ function broadcastPresence(room) {
 // ================= SOCKET CONNECTION =================
 io.on('connection', (socket) => {
     console.log(`Novo dispositivo conectado: ${socket.id}`);
+
+    socket.on('subscribe-logs', () => {
+        socket.join('admin-logs');
+        socket.emit('initial-logs', systemLogs);
+    });
+
+    socket.on('error', (err) => {
+        console.error('Socket.IO error:', err);
+    });
 
     // --- Registrar Usuário ---
     socket.on('register', (data) => {
@@ -211,4 +215,13 @@ app.use(express.static(path.join(__dirname)));
 // ================= START =================
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor rodando na porta ${PORT}`);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection:', reason);
 });
