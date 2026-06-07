@@ -162,14 +162,14 @@
             if (!myStream) return;
             myStream.getAudioTracks()[0].enabled = true;
             pttBtn.classList.add('active');
-            socket.emit('user_talking', { peerId: myPeer.id, isTalking: true });
+            socket.emit('talking_state', { peerId: myPeer.id, isTalking: true });
         }
 
         function stopTalking() {
             if (!myStream) return;
             myStream.getAudioTracks()[0].enabled = false;
             pttBtn.classList.remove('active');
-            socket.emit('user_talking', { peerId: myPeer.id, isTalking: false });
+            socket.emit('talking_state', { peerId: myPeer.id, isTalking: false });
         }
 
         // Eventos Mouse

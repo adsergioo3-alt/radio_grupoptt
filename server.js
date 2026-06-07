@@ -79,13 +79,12 @@ io.on('connection', (socket) => {
 // 'proxied: true' é vital para o funcionamento no Render (HTTPS)
 const peerServer = ExpressPeerServer(server, {
     debug: true,
-    path: '/myapp',
+    path: '/',
     proxied: true,
     allow_discovery: false,
     pingInterval: 5000
 });
 
-// A rota final no Android será: https://radio-grupoptt.onrender.com/peerjs/myapp
 app.use('/peerjs', peerServer);
 
 // ================= DATA STORAGE =================
